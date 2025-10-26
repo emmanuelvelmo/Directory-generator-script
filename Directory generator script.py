@@ -8,10 +8,10 @@ codificacion_archivo = 'utf-8'
 # Procesa el contenido de un archivo y lo escribe en su ruta correspondiente
 def procesar_contenido_archivo(lineas_contenido, ruta_archivo_destino):
     # Crear directorio padre si no existe
-    ruta_archivo_destino.parent.mkdir(parents=True, exist_ok=True)
+    ruta_archivo_destino.parent.mkdir(parents = True, exist_ok = True)
     
     # Escribir contenido en el archivo
-    with open(ruta_archivo_destino, 'w', encoding=codificacion_archivo) as archivo_val:
+    with open(ruta_archivo_destino, 'w', encoding = codificacion_archivo) as archivo_val:
         archivo_val.write(lineas_contenido)
 
 # Determina si un elemento es archivo (tiene extensión) o directorio
@@ -41,7 +41,7 @@ def procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz):
             continue
         
         # Detectar si es línea de árbol (contiene caracteres de árbol)
-        tiene_patron_arbol = any(pattern in linea_val for pattern in ['├', '└', '──', '│'])
+        tiene_patron_arbol = any(caracter in linea_val for caracter in ['├', '└', '──', '│'])
         
         if tiene_patron_arbol:
             # Calcular nivel por indentación (contar prefijo de árbol)
@@ -64,6 +64,7 @@ def procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz):
             # Extraer nombre del elemento (eliminar caracteres de árbol)
             nombre_elemento = ""
             en_nombre = False
+            
             for char in linea_val:
                 if not en_nombre and char not in ['├', '└', '─', '│', ' ']:
                     en_nombre = True
@@ -103,41 +104,40 @@ def extraer_contenidos_archivos(lineas_documento):
     contenidos_archivos = {}
     archivo_actual = None
     contenido_actual = []
+    en_contenido_archivo = False
     
-    for indice_val, linea_val in enumerate(lineas_documento):
+    for linea_val in lineas_documento:
         linea_limpia = linea_val.rstrip('\n\r')
         
         # Detectar separadores
         if '------------------------------------' in linea_limpia:
             # Guardar archivo anterior si existe
-            if archivo_actual and contenido_actual:
-                # Unir contenido y guardar
+            if archivo_actual is not None:
+                # Unir contenido y guardar (puede estar vacío)
                 contenido_final = '\n'.join(contenido_actual).rstrip()
                 contenidos_archivos[archivo_actual] = contenido_final
                 archivo_actual = None
                 contenido_actual = []
+                en_contenido_archivo = False
             continue
         
-        # Detectar nuevo archivo (línea que es solo nombre de archivo con extensión)
-        if (archivo_actual is None and
+        # Detectar nuevo archivo (línea que contiene ruta de archivo con extensión)
+        if (archivo_actual is None and 
             '.' in linea_limpia and 
-            not any(c in linea_limpia for c in '├└│─') and
-            linea_limpia.strip() == linea_limpia and
-            not linea_limpia.startswith(' ')):
+            not any(caracter in linea_limpia for caracter in ['├', '└', '│', '─']) and
+            linea_limpia.strip() == linea_limpia):
             
             archivo_actual = linea_limpia
             contenido_actual = []
+            en_contenido_archivo = True
+            continue
         
-        # Agregar contenido al archivo actual
-        elif archivo_actual and linea_limpia.strip():
-            # Solo agregar si no es otro nombre de archivo
-            if not ('.' in linea_limpia and 
-                   linea_limpia.strip() == linea_limpia and 
-                   not linea_limpia.startswith(' ')):
-                contenido_actual.append(linea_limpia)
+        # Agregar contenido al archivo actual si estamos en sección de contenido
+        if en_contenido_archivo and archivo_actual is not None:
+            contenido_actual.append(linea_limpia)
     
-    # Guardar último archivo
-    if archivo_actual and contenido_actual:
+    # Guardar último archivo procesado
+    if archivo_actual is not None:
         contenido_final = '\n'.join(contenido_actual).rstrip()
         contenidos_archivos[archivo_actual] = contenido_final
     
@@ -146,17 +146,19 @@ def extraer_contenidos_archivos(lineas_documento):
 # Procesa el archivo de estructura y genera los directorios y archivos
 def procesar_archivo_estructura(ruta_archivo):
     # Leer todo el contenido del archivo
-    with open(ruta_archivo, 'r', encoding=codificacion_archivo) as archivo_val:
+    with open(ruta_archivo, 'r', encoding = codificacion_archivo) as archivo_val:
         lineas = archivo_val.readlines()
     
     if not lineas:
-        return
+        print("Empty file\n")
+        return False
     
     # Extraer nombre de carpeta raiz (primera línea)
     nombre_carpeta_raiz = lineas[0].strip()
     
     if not nombre_carpeta_raiz:
-        return
+        print("No root folder name found\n")
+        return False
     
     # Separar secciones
     lineas_arbol = []
@@ -180,30 +182,43 @@ def procesar_archivo_estructura(ruta_archivo):
     
     # Crear directorios
     for directorio_val in directorios:
-        pathlib.Path(directorio_val).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(directorio_val).mkdir(parents = True, exist_ok = True)
     
     # Crear archivos con sus contenidos
     for archivo_ruta in archivos:
         nombre_archivo = os.path.basename(archivo_ruta)
-        if nombre_archivo in contenidos:
-            procesar_contenido_archivo(contenidos[nombre_archivo], pathlib.Path(archivo_ruta))
+        
+        # Buscar contenido por nombre de archivo
+        contenido_encontrado = None
+        
+        for clave_archivo in contenidos:
+            if clave_archivo.endswith(nombre_archivo):
+                contenido_encontrado = contenidos[clave_archivo]
+                break
+        
+        if contenido_encontrado is not None:
+            procesar_contenido_archivo(contenido_encontrado, pathlib.Path(archivo_ruta))
         else:
             # Crear archivo vacío si no se encuentra contenido
             procesar_contenido_archivo("", pathlib.Path(archivo_ruta))
-
-# Busca el primer archivo .txt en el directorio actual
-def buscar_archivo_txt():
-    directorio_actual = pathlib.Path('.')
-    archivo_script = pathlib.Path(__file__).name
     
-    for archivo_val in directorio_actual.glob('*.txt'):
-        if archivo_val.is_file() and archivo_val.name != archivo_script:
-            return archivo_val
+    # Mostrar estadísticas
+    print(f"Output: {len(directorios)} directories, {len(archivos)} files\n")
+    return True
+
+# BUCLE PRINCIPAL
+while True:
+    # Solicitar directorio del archivo TXT
+    directorio_entrada = input("TXT file directory: ").strip('"\'')
     
-    return None
-
-# PUNTO DE PARTIDA
-archivo_txt = buscar_archivo_txt()
-
-if archivo_txt:
-    procesar_archivo_estructura(archivo_txt)
+    # Verificar que el directorio existe
+    if not pathlib.Path(directorio_entrada).exists():
+        print("Wrong directory\n")
+        continue
+    
+    # Ejecutar procesamiento de estructura
+    resultado_procesamiento = procesar_archivo_estructura(directorio_entrada)
+    
+    # Si el procesamiento falla, mostrar mensaje
+    if not resultado_procesamiento:
+        print("Processing failed\n")
