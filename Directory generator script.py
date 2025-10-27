@@ -25,12 +25,12 @@ def es_archivo(nombre_elemento):
     return False
 
 # Procesa estructura de directorios y archivos del árbol
-def procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz):
-    estructura_directorios = [nombre_carpeta_raiz]
+def procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz, directorio_base):
+    estructura_directorios = [directorio_base / nombre_carpeta_raiz]
     estructura_archivos = []
     
     # Usaremos una pila para mantener la ruta actual según el nivel de indentación
-    pila_rutas = [nombre_carpeta_raiz]
+    pila_rutas = [directorio_base / nombre_carpeta_raiz]
     pila_niveles = [0]
     
     for linea_val in lineas_arbol:
@@ -82,10 +82,10 @@ def procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz):
                 pila_niveles.pop()
             
             # Obtener la ruta padre actual
-            ruta_padre = pila_rutas[-1] if pila_rutas else nombre_carpeta_raiz
+            ruta_padre = pila_rutas[-1] if pila_rutas else directorio_base / nombre_carpeta_raiz
             
             # Construir la ruta completa
-            ruta_completa = os.path.join(ruta_padre, nombre_elemento)
+            ruta_completa = ruta_padre / nombre_elemento
             
             # Determinar si es directorio o archivo
             if es_archivo(nombre_elemento):
@@ -105,6 +105,7 @@ def extraer_contenidos_archivos(lineas_documento):
     archivo_actual = None
     contenido_actual = []
     en_contenido_archivo = False
+    primera_linea_contenido = True
     
     for linea_val in lineas_documento:
         linea_limpia = linea_val.rstrip('\n\r')
@@ -119,6 +120,7 @@ def extraer_contenidos_archivos(lineas_documento):
                 archivo_actual = None
                 contenido_actual = []
                 en_contenido_archivo = False
+                primera_linea_contenido = True
             continue
         
         # Detectar nuevo archivo (línea que contiene ruta de archivo con extensión)
@@ -130,10 +132,17 @@ def extraer_contenidos_archivos(lineas_documento):
             archivo_actual = linea_limpia
             contenido_actual = []
             en_contenido_archivo = True
+            primera_linea_contenido = True
             continue
         
         # Agregar contenido al archivo actual si estamos en sección de contenido
         if en_contenido_archivo and archivo_actual is not None:
+            # Si es la primera línea de contenido y está vacía, saltarla
+            if primera_linea_contenido and not linea_limpia.strip():
+                continue
+            
+            # Marcar que ya pasamos la primera línea de contenido
+            primera_linea_contenido = False
             contenido_actual.append(linea_limpia)
     
     # Guardar último archivo procesado
@@ -145,6 +154,9 @@ def extraer_contenidos_archivos(lineas_documento):
 
 # Procesa el archivo de estructura y genera los directorios y archivos
 def procesar_archivo_estructura(ruta_archivo):
+    # Obtener directorio base donde se encuentra el archivo TXT
+    directorio_base = pathlib.Path(ruta_archivo).parent
+    
     # Leer todo el contenido del archivo
     with open(ruta_archivo, 'r', encoding = codificacion_archivo) as archivo_val:
         lineas = archivo_val.readlines()
@@ -177,16 +189,16 @@ def procesar_archivo_estructura(ruta_archivo):
             lineas_arbol.append(linea_val)
     
     # Procesar estructura
-    directorios, archivos = procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz)
+    directorios, archivos = procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz, directorio_base)
     contenidos = extraer_contenidos_archivos(lineas_contenidos)
     
     # Crear directorios
     for directorio_val in directorios:
-        pathlib.Path(directorio_val).mkdir(parents = True, exist_ok = True)
+        directorio_val.mkdir(parents = True, exist_ok = True)
     
     # Crear archivos con sus contenidos
     for archivo_ruta in archivos:
-        nombre_archivo = os.path.basename(archivo_ruta)
+        nombre_archivo = archivo_ruta.name
         
         # Buscar contenido por nombre de archivo
         contenido_encontrado = None
@@ -197,10 +209,10 @@ def procesar_archivo_estructura(ruta_archivo):
                 break
         
         if contenido_encontrado is not None:
-            procesar_contenido_archivo(contenido_encontrado, pathlib.Path(archivo_ruta))
+            procesar_contenido_archivo(contenido_encontrado, archivo_ruta)
         else:
             # Crear archivo vacío si no se encuentra contenido
-            procesar_contenido_archivo("", pathlib.Path(archivo_ruta))
+            procesar_contenido_archivo("", archivo_ruta)
     
     # Mostrar estadísticas
     print(f"Output: {len(directorios)} directories, {len(archivos)} files\n")
