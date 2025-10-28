@@ -23,6 +23,7 @@ void procesar_contenido_archivo(const std::string& lineas_contenido, const std::
     {
         archivo_val << lineas_contenido;
         archivo_val.close();
+        std::cout << "Created file: " << ruta_archivo_destino << std::endl;
     }
 }
 
@@ -44,6 +45,30 @@ bool es_archivo(const std::string& nombre_elemento)
     return false;
 }
 
+// Función para detectar caracteres de árbol en diferentes codificaciones
+bool contieneCaracterArbol(const std::string& linea)
+{
+    // Buscar patrones de árbol en diferentes representaciones
+    // Patrones Unicode comunes para árboles de directorios
+    if (linea.find("├") != std::string::npos) return true;
+    if (linea.find("└") != std::string::npos) return true;
+    if (linea.find("──") != std::string::npos) return true;
+    if (linea.find("│") != std::string::npos) return true;
+
+    // También buscar representaciones alternativas que puedan aparecer en Windows
+    if (linea.find("\xE2\x94\x9C") != std::string::npos) return true; // ├ en UTF-8 bytes
+    if (linea.find("\xE2\x94\x94") != std::string::npos) return true; // └ en UTF-8 bytes
+    if (linea.find("\xE2\x94\x80") != std::string::npos) return true; // ─ en UTF-8 bytes
+    if (linea.find("\xE2\x94\x82") != std::string::npos) return true; // │ en UTF-8 bytes
+
+    // Buscar patrones con los caracteres mal interpretados que vemos en la salida
+    if (linea.find("Γö£") != std::string::npos) return true;
+    if (linea.find("ΓöÇ") != std::string::npos) return true;
+    if (linea.find("Γöö") != std::string::npos) return true;
+
+    return false;
+}
+
 // Procesa estructura de directorios y archivos del árbol
 std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>> procesar_estructura_directorios(
     const std::vector<std::string>& lineas_arbol,
@@ -54,6 +79,7 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
     std::vector<std::filesystem::path> estructura_archivos;
 
     estructura_directorios.push_back(directorio_base / nombre_carpeta_raiz);
+    std::cout << "Root directory: " << (directorio_base / nombre_carpeta_raiz) << std::endl;
 
     // Usaremos una pila para mantener la ruta actual según el nivel de indentación
     std::stack<std::filesystem::path> pila_rutas;
@@ -61,6 +87,8 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
 
     pila_rutas.push(directorio_base / nombre_carpeta_raiz);
     pila_niveles.push(0);
+
+    std::cout << "Processing " << lineas_arbol.size() << " tree lines..." << std::endl;
 
     for (const std::string& linea_val : lineas_arbol)
     {
@@ -82,25 +110,40 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
             continue;
         }
 
-        // Detectar si es línea de árbol (contiene caracteres de árbol)
-        // Reemplazar caracteres Unicode por equivalentes ASCII
-        bool tiene_patron_arbol = (linea_limpia.find("├") != std::string::npos) ||
-            (linea_limpia.find("└") != std::string::npos) ||
-            (linea_limpia.find("──") != std::string::npos) ||
-            (linea_limpia.find("│") != std::string::npos);
+        // Detectar si es línea de árbol usando nuestra función mejorada
+        bool tiene_patron_arbol = contieneCaracterArbol(linea_limpia);
 
         if (tiene_patron_arbol)
         {
+            std::cout << "Found tree line: " << linea_limpia << std::endl;
+
             // Calcular nivel por indentación (contar prefijo de árbol)
             int nivel_actual = 0;
             int caracteres_arbol = 0;
 
             // Contar caracteres de árbol antes del nombre
-            for (char caracter : linea_limpia)
+            for (size_t i = 0; i < linea_limpia.length(); ++i)
             {
-                if (caracter == '├' || caracter == '└' || caracter == '─' || caracter == '│' || caracter == ' ')
+                char c = linea_limpia[i];
+                // Verificar si es un carácter de árbol o espacio
+                if (c == ' ' ||
+                    (i + 2 < linea_limpia.length() &&
+                        (linea_limpia.substr(i, 3) == "Γö£" ||
+                            linea_limpia.substr(i, 3) == "ΓöÇ" ||
+                            linea_limpia.substr(i, 3) == "Γöö" ||
+                            linea_limpia.substr(i, 3) == "├" ||
+                            linea_limpia.substr(i, 3) == "└" ||
+                            linea_limpia.substr(i, 3) == "──" ||
+                            linea_limpia.substr(i, 3) == "│")))
                 {
-                    caracteres_arbol++;
+                    if (c == ' ') {
+                        caracteres_arbol++;
+                    }
+                    else {
+                        // Saltar caracteres Unicode (3 bytes cada uno)
+                        caracteres_arbol += 3;
+                        i += 2; // Avanzar los 2 bytes adicionales
+                    }
                 }
                 else
                 {
@@ -108,23 +151,44 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
                 }
             }
 
-            // Calcular nivel basado en caracteres de árbol
+            // Calcular nivel basado en caracteres de árbol (cada 4 espacios = 1 nivel)
             nivel_actual = caracteres_arbol / 4;
 
             // Extraer nombre del elemento (eliminar caracteres de árbol)
             std::string nombre_elemento = "";
             bool en_nombre = false;
 
-            for (char caracter : linea_limpia)
+            for (size_t i = 0; i < linea_limpia.length(); ++i)
             {
-                if (!en_nombre && caracter != '├' && caracter != '└' && caracter != '─' && caracter != '│' && caracter != ' ')
+                char c = linea_limpia[i];
+
+                // Saltar caracteres de árbol
+                if (!en_nombre &&
+                    (c == ' ' ||
+                        (i + 2 < linea_limpia.length() &&
+                            (linea_limpia.substr(i, 3) == "Γö£" ||
+                                linea_limpia.substr(i, 3) == "ΓöÇ" ||
+                                linea_limpia.substr(i, 3) == "Γöö" ||
+                                linea_limpia.substr(i, 3) == "├" ||
+                                linea_limpia.substr(i, 3) == "└" ||
+                                linea_limpia.substr(i, 3) == "──" ||
+                                linea_limpia.substr(i, 3) == "│"))))
+                {
+                    if (c != ' ') {
+                        i += 2; // Saltar caracteres Unicode completos
+                    }
+                    continue;
+                }
+
+                // Comenzar a capturar el nombre
+                if (!en_nombre)
                 {
                     en_nombre = true;
                 }
 
                 if (en_nombre)
                 {
-                    nombre_elemento += caracter;
+                    nombre_elemento += c;
                 }
             }
 
@@ -146,6 +210,8 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
                 continue;
             }
 
+            std::cout << "Extracted: '" << nombre_elemento << "' at level " << nivel_actual << std::endl;
+
             // Si el nivel actual es menor o igual al anterior, retroceder en la pila
             while (pila_niveles.size() > 1 && pila_niveles.top() >= nivel_actual)
             {
@@ -164,6 +230,7 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
             {
                 // Es un archivo
                 estructura_archivos.push_back(ruta_completa);
+                std::cout << "Added file: " << ruta_completa << std::endl;
             }
             else
             {
@@ -171,7 +238,12 @@ std::pair<std::vector<std::filesystem::path>, std::vector<std::filesystem::path>
                 estructura_directorios.push_back(ruta_completa);
                 pila_rutas.push(ruta_completa);
                 pila_niveles.push(nivel_actual);
+                std::cout << "Added directory: " << ruta_completa << std::endl;
             }
+        }
+        else
+        {
+            std::cout << "Skipped (not tree): " << linea_limpia << std::endl;
         }
     }
 
@@ -184,8 +256,11 @@ std::unordered_map<std::string, std::string> extraer_contenidos_archivos(const s
     std::unordered_map<std::string, std::string> contenidos_archivos;
     std::string archivo_actual;
     std::vector<std::string> contenido_actual;
+
     bool en_contenido_archivo = false;
     bool primera_linea_contenido = true;
+
+    std::cout << "Extracting contents from " << lineas_documento.size() << " lines..." << std::endl;
 
     for (const std::string& linea_val : lineas_documento)
     {
@@ -229,6 +304,7 @@ std::unordered_map<std::string, std::string> extraer_contenidos_archivos(const s
                 }
 
                 contenidos_archivos[archivo_actual] = contenido_final;
+                std::cout << "Saved content for: " << archivo_actual << " (" << contenido_actual.size() << " lines)" << std::endl;
                 archivo_actual.clear();
                 contenido_actual.clear();
                 en_contenido_archivo = false;
@@ -241,17 +317,14 @@ std::unordered_map<std::string, std::string> extraer_contenidos_archivos(const s
         // Detectar nuevo archivo (línea que contiene ruta de archivo con extensión)
         if (archivo_actual.empty() &&
             linea_limpia.find('.') != std::string::npos &&
-            linea_limpia.find('├') == std::string::npos &&
-            linea_limpia.find('└') == std::string::npos &&
-            linea_limpia.find('│') == std::string::npos &&
-            linea_limpia.find('─') == std::string::npos &&
+            !contieneCaracterArbol(linea_limpia) && // No debe contener caracteres de árbol
             linea_limpia.find_first_not_of(" \t") == 0)
         {
             archivo_actual = linea_limpia;
             contenido_actual.clear();
             en_contenido_archivo = true;
             primera_linea_contenido = true;
-
+            std::cout << "Found file header: " << archivo_actual << std::endl;
             continue;
         }
 
@@ -294,6 +367,7 @@ std::unordered_map<std::string, std::string> extraer_contenidos_archivos(const s
         }
 
         contenidos_archivos[archivo_actual] = contenido_final;
+        std::cout << "Saved content for: " << archivo_actual << " (" << contenido_actual.size() << " lines)" << std::endl;
     }
 
     return contenidos_archivos;
@@ -304,14 +378,14 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
 {
     // Obtener directorio base donde se encuentra el archivo TXT
     std::filesystem::path directorio_base = ruta_archivo.parent_path();
+    std::cout << "Base directory: " << directorio_base << std::endl;
 
     // Leer todo el contenido del archivo
     std::ifstream archivo_val(ruta_archivo);
 
     if (!archivo_val.is_open())
     {
-        std::cout << "Cannot open file\n";
-
+        std::cout << "Cannot open file: " << ruta_archivo << std::endl;
         return false;
     }
 
@@ -327,10 +401,11 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
 
     if (lineas.empty())
     {
-        std::cout << "Empty file\n";
-
+        std::cout << "Empty file: " << ruta_archivo << std::endl;
         return false;
     }
+
+    std::cout << "Read " << lineas.size() << " lines from file" << std::endl;
 
     // Extraer nombre de carpeta raiz (primera línea)
     std::string nombre_carpeta_raiz = lineas[0];
@@ -351,9 +426,10 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
     if (nombre_carpeta_raiz.empty())
     {
         std::cout << "No root folder name found\n";
-
         return false;
     }
+
+    std::cout << "Root folder: " << nombre_carpeta_raiz << std::endl;
 
     // Separar secciones
     std::vector<std::string> lineas_arbol;
@@ -375,6 +451,7 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
         if (linea_limpia.find("------------------------------------") != std::string::npos)
         {
             en_contenidos = true;
+            std::cout << "Found content separator at line " << i << std::endl;
         }
 
         if (en_contenidos)
@@ -387,6 +464,9 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
         }
     }
 
+    std::cout << "Tree section: " << lineas_arbol.size() << " lines" << std::endl;
+    std::cout << "Content section: " << lineas_contenidos.size() << " lines" << std::endl;
+
     // Procesar estructura
     auto estructuras = procesar_estructura_directorios(lineas_arbol, nombre_carpeta_raiz, directorio_base);
     auto directorios = estructuras.first;
@@ -394,11 +474,21 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
 
     auto contenidos = extraer_contenidos_archivos(lineas_contenidos);
 
+    std::cout << "Creating " << directorios.size() << " directories..." << std::endl;
+
     // Crear directorios
     for (const auto& directorio_val : directorios)
     {
-        std::filesystem::create_directories(directorio_val);
+        bool creado = std::filesystem::create_directories(directorio_val);
+        if (creado) {
+            std::cout << "Created directory: " << directorio_val << std::endl;
+        }
+        else {
+            std::cout << "Directory already exists: " << directorio_val << std::endl;
+        }
     }
+
+    std::cout << "Creating " << archivos.size() << " files..." << std::endl;
 
     // Crear archivos con sus contenidos
     for (const auto& archivo_ruta : archivos)
@@ -414,25 +504,23 @@ bool procesar_archivo_estructura(const std::filesystem::path& ruta_archivo)
             const std::string& clave_archivo = par_contenido.first;
             const std::string& contenido_val = par_contenido.second;
 
+            // Verificar si la clave termina con el nombre del archivo
             if (clave_archivo.length() >= nombre_archivo.length() &&
                 clave_archivo.compare(clave_archivo.length() - nombre_archivo.length(), nombre_archivo.length(), nombre_archivo) == 0)
             {
                 contenido_encontrado = contenido_val;
                 contenido_encontrado_flag = true;
-
+                std::cout << "Found content for: " << nombre_archivo << std::endl;
                 break;
             }
         }
 
-        if (contenido_encontrado_flag)
+        if (!contenido_encontrado_flag)
         {
-            procesar_contenido_archivo(contenido_encontrado, archivo_ruta);
+            std::cout << "No content found for: " << nombre_archivo << " (creating empty file)" << std::endl;
         }
-        else
-        {
-            // Crear archivo vacío si no se encuentra contenido
-            procesar_contenido_archivo("", archivo_ruta);
-        }
+
+        procesar_contenido_archivo(contenido_encontrado, archivo_ruta);
     }
 
     // Mostrar estadísticas
@@ -466,10 +554,11 @@ int main()
         // Verificar que el directorio existe
         if (!std::filesystem::exists(directorio_entrada))
         {
-            std::cout << "Wrong directory\n";
-
+            std::cout << "Wrong directory: " << directorio_entrada << std::endl;
             continue;
         }
+
+        std::cout << "Processing: " << directorio_entrada << std::endl;
 
         // Ejecutar procesamiento de estructura
         bool resultado_procesamiento = procesar_archivo_estructura(directorio_entrada);
